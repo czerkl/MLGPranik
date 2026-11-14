@@ -2,13 +2,12 @@ import os
 import threading
 import asyncio
 from flask import Flask, render_template_string, request, jsonify
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, functions
 from telethon.sessions import StringSession
 
 API_ID = int(os.environ.get("API_ID", 2040))
 API_HASH = os.environ.get("API_HASH", "b18441a1ff607e10a989891a5462e627")
 STRING_SESSION = os.environ.get("STRING_SESSION", "").strip()
-# Твой личный Telegram ID (чтобы бот слушался только тебя)
 OWNER_ID = int(os.environ.get("OWNER_ID", 0))
 
 app = Flask(__name__)
@@ -19,68 +18,102 @@ asyncio.set_event_loop(telethon_loop)
 
 client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH, loop=telethon_loop)
 
-# Состояние реле
-relay_state = {
-    "enabled": True,       # Включена ли отправка вообще (килл-свич)
-    "target": ""           # Чат по умолчанию
+# Состояние панели
+panel_state = {
+    "enabled": True,
+    "my_name": "Загрузка...",
+    "my_bio": "Загрузка..."
 }
 
-# HTML-интерфейс панели отправки
+# Красивый многофункциональный интерфейс (Dashboard)
 HTML_PAGE = """
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Web Telegram Sender</title>
+    <title>Twink Control Hub</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; padding: 20px; display: flex; justify-content: center; }
-        .card { background: #1e293b; padding: 25px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); width: 100%; max-width: 400px; }
-        h2 { text-align: center; margin-bottom: 20px; color: #38bdf8; }
-        label { font-size: 14px; color: #94a3b8; display: block; margin-top: 12px; }
-        input, textarea { width: 100%; padding: 12px; margin-top: 6px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: #fff; box-sizing: border-box; font-size: 16px; font-family: inherit; }
-        textarea { resize: vertical; height: 100px; }
-        button { width: 100%; padding: 12px; margin-top: 15px; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; padding: 15px; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 440px; }
+        .card { background: #1e293b; padding: 20px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); margin-bottom: 15px; border: 1px solid #334155; }
+        h2 { text-align: center; margin-bottom: 5px; color: #38bdf8; font-size: 22px; }
+        .subtitle { text-align: center; font-size: 12px; color: #94a3b8; margin-bottom: 15px; }
+        h3 { font-size: 15px; color: #cbd5e1; margin-top: 0; margin-bottom: 10px; border-bottom: 1px solid #334155; padding-bottom: 5px; }
+        label { font-size: 13px; color: #94a3b8; display: block; margin-top: 8px; }
+        input, textarea { width: 100%; padding: 10px; margin-top: 4px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: #fff; box-sizing: border-box; font-size: 14px; font-family: inherit; }
+        textarea { resize: vertical; height: 70px; }
+        button { width: 100%; padding: 10px; margin-top: 12px; border: none; border-radius: 8px; font-size: 14px; font-weight: bold; cursor: pointer; transition: 0.2s; }
         .btn-send { background: #22c55e; color: white; }
         .btn-send:hover { background: #16a34a; }
-        .status-box { margin-top: 20px; padding: 12px; background: #0f172a; border-radius: 8px; text-align: center; font-size: 14px; border: 1px solid #334155; }
+        .btn-name { background: #3b82f6; color: white; }
+        .btn-name:hover { background: #2563eb; }
+        .btn-bio { background: #8b5cf6; color: white; }
+        .btn-bio:hover { background: #7c3aed; }
+        .status-box { padding: 10px; background: #0f172a; border-radius: 8px; text-align: center; font-size: 13px; border: 1px solid #334155; margin-top: 10px; }
         .active { color: #22c55e; font-weight: bold; }
         .inactive { color: #ef4444; font-weight: bold; }
+        .info-text { font-size: 12px; color: #94a3b8; margin-top: 5px; text-align: center; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h2>🚀 Отправка с твинка</h2>
-        
-        <label>Чат (@username или -100...):</label>
-        <input type="text" id="targetInput" placeholder="@group_name" value="{{ target }}">
+    <div class="container">
+        <h2>🎛️ Twink Control Hub</h2>
+        <div class="subtitle">Многофункциональный пульт управления аккаунтом</div>
 
-        <label>Текст сообщения:</label>
-        <textarea id="textInput" placeholder="Введите текст сообщения..."></textarea>
+        <!-- Секция 1: Отправка сообщений -->
+        <div class="card">
+            <h3>📨 Отправить сообщение</h3>
+            <label>Чат (@username или ID):</label>
+            <input type="text" id="targetInput" placeholder="@group_name">
 
-        <button class="btn-send" onclick="sendMessage()">📨 Отправить сообщение</button>
+            <label>Текст сообщения:</label>
+            <textarea id="textInput" placeholder="Что написать от твоего имени..."></textarea>
 
-        <div class="status-box">
-            Статус реле: <span id="statusText" class="{{ 'active' if enabled else 'inactive' }}">{{ 'Активно (Разрешено)' if enabled else 'ЗАБЛОКИРОВАНО (Стоп)' }}</span>
+            <button class="btn-send" onclick="sendAction('/api/send', {target: document.getElementById('targetInput').value, text: document.getElementById('textInput').value})">🚀 Отправить в чат</button>
+        </div>
+
+        <!-- Секция 2: Смена имени -->
+        <div class="card">
+            <h3>✏️ Сменить имя профиля</h3>
+            <label>Новое имя:</label>
+            <input type="text" id="nameInput" value="{{ my_name }}">
+            <button class="btn-name" onclick="sendAction('/api/set_name', {name: document.getElementById('nameInput').value})">🔄 Обновить имя</button>
+        </div>
+
+        <!-- Секция 3: Смена Bio -->
+        <div class="card">
+            <h3>🎭 Сменить Bio (О себе)</h3>
+            <label>Новый статус (до 70 символов):</label>
+            <input type="text" id="bioInput" maxlength="70" value="{{ my_bio }}">
+            <button class="btn-bio" onclick="sendAction('/api/set_bio', {bio: document.getElementById('bioInput').value})">✨ Обновить Bio</button>
+        </div>
+
+        <!-- Статус панели -->
+        <div class="card" style="padding: 15px;">
+            <div class="status-box">
+                Состояние панели: <span class="{{ 'active' if enabled else 'inactive' }}">{{ '⚡ Активна (Работает)' if enabled else '🛑 ЗАБЛОКИРОВАНА (Стоп)' }}</span>
+            </div>
+            <div class="info-text">Для экстренного отключения напиши <b>стоп</b> в ЛС твинку. Для включения — <b>старт</b>.</div>
         </div>
     </div>
 
     <script>
-        async function sendMessage() {
-            let target = document.getElementById('targetInput').value;
-            let text = document.getElementById('textInput').value;
-            
-            let response = await fetch('/send', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ target: target, text: text })
-            });
-            let result = await response.json();
-            alert(result.message);
-            if(response.ok) {
-                document.getElementById('textInput').value = '';
+        async function sendAction(url, data) {
+            try {
+                let response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                let result = await response.json();
+                alert(result.message);
+                if(response.ok) {
+                    location.reload();
+                }
+            } catch (err) {
+                alert("❌ Ошибка соединения с сервером!");
             }
-            location.reload();
         }
     </script>
 </body>
@@ -91,24 +124,21 @@ def run_telegram_background():
     async def background_main():
         await client.connect()
         me = await client.get_me()
-        print(f"Telegram client connected as {me.first_name} (ID: {me.id})")
-        if OWNER_ID == 0:
-            print("WARNING: OWNER_ID is not set in environment variables! Anyone in PM can trigger stop/start.")
+        panel_state["my_name"] = me.first_name or ""
+        panel_state["my_bio"] = me.about or ""
+        print(f"Connected as {me.first_name} (ID: {me.id})")
 
-        # Слушаем ЛС для экстренных команд "стоп" / "старт"
+        # Слушаем ЛС для килл-свича
         @client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
-        async def kill_switch_listener(event):
-            # Проверяем, что написал именно ты (если OWNER_ID задан) или любой в ЛС (если не задан)
+        async def kill_switch(event):
             if OWNER_ID == 0 or event.sender_id == OWNER_ID:
                 text = event.raw_text.strip().lower()
                 if text == "стоп":
-                    relay_state["enabled"] = False
-                    await event.respond("🛑 **ВНИМАНИЕ:** Веб-отправка сообщений с твинка экстренно ОТКЛЮЧЕНА!")
-                    print("Kill-switch activated: Sending disabled via PM.")
+                    panel_state["enabled"] = False
+                    await event.respond("🛑 Пульт управления экстренно ЗАБЛОКИРОВАН!")
                 elif text == "старт":
-                    relay_state["enabled"] = True
-                    await event.respond("🟢 Веб-отправка сообщений снова ВКЛЮЧЕНА!")
-                    print("Kill-switch deactivated: Sending enabled via PM.")
+                    panel_state["enabled"] = True
+                    await event.respond("🟢 Пульт управления РАЗБЛОКИРОВАН!")
 
         await client.run_until_disconnected()
 
@@ -117,34 +147,71 @@ def run_telegram_background():
 @app.route('/')
 def home():
     return render_template_string(HTML_PAGE, 
-                                  target=relay_state["target"], 
-                                  enabled=relay_state["enabled"])
+                                  my_name=panel_state["my_name"],
+                                  my_bio=panel_state["my_bio"],
+                                  enabled=panel_state["enabled"])
 
-@app.route('/send', methods=['POST'])
+@app.route('/api/send', methods=['POST'])
 def api_send():
-    if not relay_state["enabled"]:
-        return jsonify({"message": "❌ Ошибка: Отправка заблокирована владельцем! (Отправьте 'старт' в ЛС твинку для разблокировки)"}), 400
-    
+    if not panel_state["enabled"]:
+        return jsonify({"message": "❌ Панель заблокирована владельцем!"}), 400
     data = request.json
     target = data.get('target', '').strip()
     text = data.get('text', '').strip()
-    
     if not target or not text:
-        return jsonify({"message": "Укажите чат и текст сообщения!"}), 400
-    
-    relay_state["target"] = target
+        return jsonify({"message": "⚠️ Заполни чат и текст!"}), 400
 
-    async def send_msg_async():
-        parsed_target = int(target) if (target.startswith("-100") or target.isdigit()) else target
-        entity = await client.get_input_entity(parsed_target)
+    async def task():
+        parsed = int(target) if (target.startswith("-100") or target.isdigit()) else target
+        entity = await client.get_input_entity(parsed)
         await client.send_message(entity, text)
 
     try:
-        future = asyncio.run_coroutine_threadsafe(send_msg_async(), telethon_loop)
+        future = asyncio.run_coroutine_threadsafe(task(), telethon_loop)
         future.result(timeout=10)
-        return jsonify({"message": "✅ Сообщение успешно отправлено от вашего имени!"})
+        return jsonify({"message": "✅ Сообщение успешно отправлено в чат!"})
     except Exception as e:
         return jsonify({"message": f"❌ Ошибка отправки: {str(e)}"}), 500
+
+@app.route('/api/set_name', methods=['POST'])
+def api_set_name():
+    if not panel_state["enabled"]:
+        return jsonify({"message": "❌ Панель заблокирована владельцем!"}), 400
+    data = request.json
+    new_name = data.get('name', '').strip()
+    if not new_name:
+        return jsonify({"message": "⚠️ Имя не может быть пустым!"}), 400
+
+    async def task():
+        await client(functions.account.UpdateProfileRequest(first_name=new_name))
+        me = await client.get_me()
+        panel_state["my_name"] = me.first_name
+
+    try:
+        future = asyncio.run_coroutine_threadsafe(task(), telethon_loop)
+        future.result(timeout=10)
+        return jsonify({"message": "✅ Имя аккаунта успешно изменено!"})
+    except Exception as e:
+        return jsonify({"message": f"❌ Ошибка смены имени: {str(e)}"}), 500
+
+@app.route('/api/set_bio', methods=['POST'])
+def api_set_bio():
+    if not panel_state["enabled"]:
+        return jsonify({"message": "❌ Панель заблокирована владельцем!"}), 400
+    data = request.json
+    new_bio = data.get('bio', '').strip()
+
+    async def task():
+        await client(functions.account.UpdateProfileRequest(about=new_bio))
+        me = await client.get_me()
+        panel_state["my_bio"] = me.about or ""
+
+    try:
+        future = asyncio.run_coroutine_threadsafe(task(), telethon_loop)
+        future.result(timeout=10)
+        return jsonify({"message": "✅ Bio (описание) успешно изменено!"})
+    except Exception as e:
+        return jsonify({"message": f"❌ Ошибка смены Bio: {str(e)}"}), 500
 
 if __name__ == '__main__':
     threading.Thread(target=run_telegram_background, daemon=True).start()
