@@ -11,7 +11,7 @@ STRING_SESSION = os.environ.get("STRING_SESSION", "").strip()
 
 app = Flask(__name__)
 
-# Создаем изолированный event loop для Telethon, чтобы исключить любые блокировки
+# Изолированный event loop для Telethon
 telethon_loop = asyncio.new_event_loop()
 asyncio.set_event_loop(telethon_loop)
 
@@ -24,27 +24,39 @@ prank_state = {
     "status": "Остановлено"
 }
 
-# Функция инициализации и бесконечного воркера статуса печати
+# Фоновый воркер с кэшированием сущности чата (без лишних запросов к API)
 def run_telegram_background():
     async def background_worker():
         await client.connect()
         print("Telegram client successfully connected in background loop!")
         
+        cached_entity = None
+        last_target = ""
+
         while True:
             if prank_state["is_typing"] and prank_state["target"]:
+                target = prank_state["target"]
+                
+                # Если целевой чат сменился, сбрасываем кэш
+                if target != last_target:
+                    cached_entity = None
+                    last_target = target
+
                 try:
-                    target = prank_state["target"]
-                    if target.startswith("-100") or target.isdigit():
-                        target = int(target)
+                    # Получаем сущность один раз и кэшируем
+                    if cached_entity is None:
+                        parsed_target = int(target) if (target.startswith("-100") or target.isdigit()) else target
+                        cached_entity = await client.get_input_entity(parsed_target)
                     
-                    # Получаем сущность чата
-                    entity = await client.get_input_entity(target)
-                    async with client.action(entity, 'typing'):
+                    async with client.action(cached_entity, 'typing'):
                         await asyncio.sleep(4)
                 except Exception as e:
-                    print(f"Typing background error: {e}")
+                    print(f"Typing error: {e}")
+                    cached_entity = None  # Сбрасываем при ошибке для повторной попытки
                     await asyncio.sleep(5)
             else:
+                cached_entity = None
+                last_target = ""
                 await asyncio.sleep(1)
 
     telethon_loop.run_until_complete(background_worker())
@@ -76,7 +88,7 @@ HTML_PAGE = """
 </head>
 <body>
     <div class="card">
-        <h2>🦐 Пранк Панель</h2>
+        <h2>❤️ Pranik</h2>
         
         <label>Ник твинка:</label>
         <input type="text" id="nameInput" value="{{ name }}">
@@ -148,7 +160,6 @@ def api_set_name():
         await client(functions.account.UpdateProfileRequest(first_name=new_name))
 
     try:
-        # Безопасно отправляем задачу в изолированный цикл Telethon
         future = asyncio.run_coroutine_threadsafe(update_profile(), telethon_loop)
         future.result(timeout=10)
         return jsonify({"message": f"Имя успешно сменено на: {new_name}"})
@@ -172,9 +183,6 @@ def api_stop():
     return jsonify({"message": "Пранк остановлен."})
 
 if __name__ == '__main__':
-    # Запускаем Telethon в фоновом системном потоке
     threading.Thread(target=run_telegram_background, daemon=True).start()
-    
-    # Запускаем Flask в главном потоке
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
