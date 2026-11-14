@@ -10,11 +10,10 @@ API_ID = int(os.environ.get("API_ID", 2040))
 API_HASH = os.environ.get("API_HASH", "b18441a1ff607e10a989891a5462e627")
 STRING_SESSION = os.environ.get("STRING_SESSION", "").strip()
 
-# Инициализация бота и Flask
-client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
+# Инициализация Flask и Telethon
 app = Flask(__name__)
+client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 
-# Состояние пранка
 prank_state = {
     "is_typing": False,
     "target": "",
@@ -22,7 +21,6 @@ prank_state = {
     "status": "Остановлено"
 }
 
-# HTML-панель управления прямо внутри скрипта
 HTML_PAGE = """
 <!DOCTYPE html>
 <html lang="ru">
@@ -38,11 +36,8 @@ HTML_PAGE = """
         input { width: 100%; padding: 12px; margin-top: 6px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: #fff; box-sizing: border-box; font-size: 16px; }
         button { width: 100%; padding: 12px; margin-top: 15px; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
         .btn-start { background: #22c55e; color: white; }
-        .btn-start:hover { background: #16a34a; }
         .btn-stop { background: #ef4444; color: white; }
-        .btn-stop:hover { background: #dc2626; }
         .btn-name { background: #3b82f6; color: white; }
-        .btn-name:hover { background: #2563eb; }
         .status-box { margin-top: 20px; padding: 12px; background: #0f172a; border-radius: 8px; text-align: center; font-size: 14px; border: 1px solid #334155; }
         .active { color: #22c55e; font-weight: bold; }
         .inactive { color: #ef4444; font-weight: bold; }
@@ -52,12 +47,12 @@ HTML_PAGE = """
     <div class="card">
         <h2>🦐 Пранк Панель</h2>
         
-        <label>Ник твинка (кого изображаем):</label>
+        <label>Ник твинка:</label>
         <input type="text" id="nameInput" value="{{ name }}">
         <button class="btn-name" onclick="setName()">Сменить имя</button>
 
-        <label>Чат (юзернейм @chat или ID -100...):</label>
-        <input type="text" id="targetInput" placeholder="@group_name или -100xxxx" value="{{ target }}">
+        <label>Чат (@username или -100...):</label>
+        <input type="text" id="targetInput" placeholder="@group_name" value="{{ target }}">
 
         <button class="btn-start" onclick="startPrank()">🟢 СТАРТ (Печатает)</button>
         <button class="btn-stop" onclick="stopPrank()">🔴 СТОП</button>
@@ -102,14 +97,16 @@ async def typing_loop():
     while prank_state["is_typing"]:
         try:
             target = prank_state["target"]
-            # Если ввели ID или юзернейм
-            if target.startswith("-100"):
+            if target.startswith("-100") or target.isdigit():
                 target = int(target)
             
-            async with client.action(target, 'typing'):
+            # Получаем сущность чата корректно (с поддержкой юзернеймов и ID)
+            entity = await client.get_input_entity(target)
+            
+            async with client.action(entity, 'typing'):
                 await asyncio.sleep(4)
         except Exception as e:
-            print(f"Ошибка статуса печати: {e}")
+            print(f"Ошибка печати: {e}")
             await asyncio.sleep(5)
 
 @app.route('/')
@@ -126,42 +123,45 @@ def api_set_name():
     new_name = data.get('name', '').strip()
     if new_name:
         prank_state["name"] = new_name
-        # Меняем имя через клиент Telegram асинхронно
-        asyncio.run_coroutine_threadsafe(
-            client(functions.account.UpdateProfileRequest(first_name=new_name, last_name="")), 
-            client.loop
-        )
-        return jsonify({"message": f"Имя успешно сменено на: {new_name}"})
-    return jsonify({"message": "Имя не может быть пустым!"})
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                client(functions.account.UpdateProfileRequest(first_name=new_name, last_name="")), 
+                client.loop
+            )
+            future.result(timeout=5)
+            return jsonify({"message": f"Имя успешно сменено на: {new_name}"})
+        except Exception as e:
+            return jsonify({"message": f"Ошибка смены имени: {str(e)}"})
+    return jsonify({"message": "Имя пустое!"})
 
 @app.route('/start', methods=['POST'])
 def api_start():
     data = request.json
     target = data.get('target', '').strip()
     if not target:
-        return jsonify({"message": "Укажите чат (юзернейм или ID)!"})
+        return jsonify({"message": "Укажите чат!"})
     
     prank_state["target"] = target
     prank_state["is_typing"] = True
     
-    # Запускаем бесконечный цикл печати в фоновом потоке бота
     asyncio.run_coroutine_threadsafe(typing_loop(), client.loop)
-    return jsonify({"message": f"Запущен статус печати в чате: {target}"})
+    return jsonify({"message": f"Запущено для: {target}"})
 
 @app.route('/stop', methods=['POST'])
 def api_stop():
     prank_state["is_typing"] = False
-    return jsonify({"message": "Пранк остановлен."})
+    return jsonify({"message": "Остановлено."})
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
-    # Запускаем Flask в фоне
+    # Запускаем Flask в отдельном потоке
     threading.Thread(target=run_flask, daemon=True).start()
     
-    # Запуск Telegram клиента
+    # Запускаем клиент Telegram
+    print("Connecting to Telegram...")
     client.start()
-    print("Web Control Panel Bot started!")
+    print("Client connected successfully!")
     client.run_until_disconnected()
